@@ -1,0 +1,278 @@
+﻿using Microsoft.Data.Sqlite;
+
+namespace CheckPoint1.Services;
+
+public class AdoNetService
+{
+    private readonly string _connectionString;
+        
+    public AdoNetService()
+    {
+        // Connection string para SQLite usando o mesmo arquivo do EF
+        _connectionString = "Data Source=loja.db";
+    }
+        
+    // ========== CONSULTAS COMPLEXAS ==========
+        
+    public void RelatorioVendasCompleto()
+    {
+        Console.WriteLine("=== RELATÓRIO VENDAS COMPLETO (ADO.NET) ===");
+        
+        var query = @"
+            SELECT 
+                p.NumeroPedido,
+                c.Nome as NomeCliente,
+                pr.Nome as NomeProduto,
+                pi.Quantidade,
+                pi.PrecoUnitario,
+                (pi.Quantidade * pi.PrecoUnitario) as Subtotal
+            FROM Pedidos p
+            INNER JOIN Clientes c ON p.ClienteId = c.Id
+            INNER JOIN PedidoItens pi ON p.Id = pi.PedidoId
+            INNER JOIN Produtos pr ON pi.ProdutoId = pr.Id
+            ORDER BY p.DataPedido";
+
+        using (var conn = GetConnection())
+        {
+            conn.Open();
+            using (var cmd = new SQLiteCommand(query, conn))
+            {
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        Console.WriteLine($"Pedido: {reader["NumeroPedido"]}");
+                        Console.WriteLine($"Cliente: {reader["NomeCliente"]}");
+                        Console.WriteLine($"Produto: {reader["NomeProduto"]}");
+                        Console.WriteLine($"Quantidade: {reader["Quantidade"]}");
+                        Console.WriteLine($"Preço Unit.: {reader["PrecoUnitario"]:C}");
+                        Console.WriteLine($"Subtotal: {reader["Subtotal"]:C}");
+                        Console.WriteLine("-------------------");
+                    }
+                }
+            }
+        }
+    }
+        
+    public void FaturamentoPorCliente()
+    {
+        Console.WriteLine("=== FATURAMENTO POR CLIENTE ===");
+        
+        var query = @"
+            SELECT 
+                c.Nome,
+                COUNT(DISTINCT p.Id) as TotalPedidos,
+                CAST(SUM(pi.Quantidade * pi.PrecoUnitario) AS REAL) as Faturamento,
+                CAST(SUM(pi.Quantidade * pi.PrecoUnitario) AS REAL) / COUNT(DISTINCT p.Id) as TicketMedio
+            FROM Clientes c
+            LEFT JOIN Pedidos p ON c.Id = p.ClienteId
+            LEFT JOIN PedidoItens pi ON p.Id = pi.PedidoId
+            GROUP BY c.Id, c.Nome
+            ORDER BY Faturamento DESC";
+
+        using (var conn = GetConnection())
+        {
+            conn.Open();
+            using (var cmd = new SQLiteCommand(query, conn))
+            {
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        Console.WriteLine($"Cliente: {reader["Nome"]}");
+                        Console.WriteLine($"Total Pedidos: {reader["TotalPedidos"]}");
+                        Console.WriteLine($"Faturamento: {reader["Faturamento"]:C}");
+                        Console.WriteLine($"Ticket Médio: {reader["TicketMedio"]:C}");
+                        Console.WriteLine("-------------------");
+                    }
+                }
+            }
+        }
+    }
+        
+    public void ProdutosSemVenda()
+    {
+        Console.WriteLine("=== PRODUTOS SEM VENDAS ===");
+        
+        var query = @"
+            SELECT 
+                c.Nome as Categoria,
+                p.Nome as Produto,
+                CAST(p.Preco AS REAL) as Preco,
+                p.Estoque,
+                CAST(p.Preco * p.Estoque AS REAL) as ValorEstoque
+            FROM Produtos p
+            INNER JOIN Categorias c ON p.CategoriaId = c.Id
+            LEFT JOIN PedidoItens pi ON p.Id = pi.ProdutoId
+            WHERE pi.Id IS NULL";
+
+        using (var conn = GetConnection())
+        {
+            conn.Open();
+            using (var cmd = new SQLiteCommand(query, conn))
+            {
+                using (var reader = cmd.ExecuteReader())
+                {
+                    var totalValorParado = 0m;
+                    while (reader.Read())
+                    {
+                        Console.WriteLine($"Categoria: {reader["Categoria"]}");
+                        Console.WriteLine($"Produto: {reader["Produto"]}");
+                        Console.WriteLine($"Preço: {reader["Preco"]:C}");
+                        Console.WriteLine($"Estoque: {reader["Estoque"]}");
+                        Console.WriteLine($"Valor em Estoque: {reader["ValorEstoque"]:C}");
+                        Console.WriteLine("-------------------");
+                        
+                        totalValorParado += Convert.ToDecimal(reader["ValorEstoque"]);
+                    }
+                    Console.WriteLine($"Total Valor Parado em Estoque: {totalValorParado:C}");
+                }
+            }
+        }
+    }
+        
+    // ========== OPERAÇÕES DE DADOS ==========
+        
+    public void AtualizarEstoqueLote()
+    {
+        Console.WriteLine("=== ATUALIZAR ESTOQUE EM LOTE ===");
+        
+        // Listar categorias disponíveis
+        using (var conn = GetConnection())
+        {
+            conn.Open();
+            
+            // Listar categorias
+            var queryCategories = "SELECT Id, Nome FROM Categorias";
+            using (var cmd = new SQLiteCommand(queryCategories, conn))
+            {
+                using (var reader = cmd.ExecuteReader())
+                {
+                    Console.WriteLine("\nCategorias disponíveis:");
+                    while (reader.Read())
+                    {
+                        Console.WriteLine($"{reader["Id"]} - {reader["Nome"]}");
+                    }
+                }
+            }
+            
+            Console.Write("\nInforme o ID da categoria para atualização: ");
+            var categoriaId = int.Parse(Console.ReadLine() ?? "0");
+            
+            // Listar produtos da categoria
+            var queryProdutos = "SELECT Id, Nome, Estoque FROM Produtos WHERE CategoriaId = @CategoriaId";
+            using (var cmd = new SQLiteCommand(queryProdutos, conn))
+            {
+                cmd.Parameters.AddWithValue("@CategoriaId", categoriaId);
+                using (var reader = cmd.ExecuteReader())
+                {
+                    Console.WriteLine("\nProdutos da categoria:");
+                    while (reader.Read())
+                    {
+                        Console.WriteLine($"ID: {reader["Id"]} - {reader["Nome"]} (Estoque atual: {reader["Estoque"]})");
+                        Console.Write("Nova quantidade em estoque: ");
+                        var novoEstoque = int.Parse(Console.ReadLine() ?? "0");
+                        
+                        // Atualizar estoque
+                        using (var updateCmd = new SQLiteCommand(
+                            "UPDATE Produtos SET Estoque = @Estoque WHERE Id = @Id", conn))
+                        {
+                            updateCmd.Parameters.AddWithValue("@Estoque", novoEstoque);
+                            updateCmd.Parameters.AddWithValue("@Id", reader["Id"]);
+                            var affected = updateCmd.ExecuteNonQuery();
+                            Console.WriteLine($"Registro atualizado com sucesso! ({affected} registro afetado)");
+                        }
+                    }
+                }
+            }
+        }
+    }
+        
+    public void InserirPedidoCompleto()
+    {
+        // TODO: Implementar INSERT com  
+        // - Inserir pedido master - Pedido master é o que vai na tabela Pedidos.
+        // - Inserir múltiplos itens - Pedido pode conter vários itens
+        // - Atualizar estoque dos produtos
+        // - Validar estoque antes de inserir o item no pedido
+            
+        Console.WriteLine("=== INSERIR PEDIDO COMPLETO ===");
+    }
+        
+    public void ExcluirDadosAntigos()
+    {
+        // TODO: Implementar DELETE com subconsulta 
+        // - Excluir pedidos cancelados há mais de 6 meses
+            
+        Console.WriteLine("=== EXCLUIR DADOS ANTIGOS ===");
+    }
+        
+    public void ProcessarDevolucao()
+    {
+        // TODO: Implementar processo complexo 
+        // 1. Localizar pedido e itens
+        // 2. Validar se pode devolver
+        // 3. Devolver estoque (no cadastro de produtos, aumentar o estoque de acordo com a quantidade do pedido.)
+        
+        
+            
+        Console.WriteLine("=== PROCESSAR DEVOLUÇÃO ===");
+    }
+        
+    // ========== ANÁLISES PERFORMANCE ==========
+        
+    public void AnalisarPerformanceVendas()
+    {
+        // TODO: Implementar análise
+        // - Vendas mensais
+        // - Crescimento percentual
+        
+        
+            
+        Console.WriteLine("=== ANÁLISE PERFORMANCE VENDAS ===");
+    }
+        
+    // ========== UTILIDADES ==========
+        
+    private SqliteConnection GetConnection()
+    {
+        return new SqliteConnection(_connectionString);
+    }
+        
+
+    public void TestarConexao()
+    {
+        Console.WriteLine("=== TESTE DE CONEXÃO ===");
+        
+        try
+        {
+            using (var conn = GetConnection())
+            {
+                conn.Open();
+                Console.WriteLine("Conexão estabelecida com sucesso!");
+                
+                // Informações do banco
+                using (var cmd = new SQLiteCommand("SELECT sqlite_version()", conn))
+                {
+                    var version = cmd.ExecuteScalar()?.ToString();
+                    Console.WriteLine($"Versão SQLite: {version}");
+                }
+                
+                // Contagem de registros nas tabelas principais
+                var tables = new[] { "Categorias", "Produtos", "Clientes", "Pedidos", "PedidoItens" };
+                foreach (var table in tables)
+                {
+                    using (var cmd = new SQLiteCommand($"SELECT COUNT(*) FROM {table}", conn))
+                    {
+                        var count = cmd.ExecuteScalar();
+                        Console.WriteLine($"Total de registros em {table}: {count}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao conectar: {ex.Message}");
+        }
+    }
+}
