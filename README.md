@@ -48,7 +48,7 @@ Este é um projeto desenvolvido em C# usando Entity Framework Core que implement
 
 1. Clone o repositório:
 ```bash
-git clone [url-do-repositorio]
+git clone https://github.com/andrelambert/cp1-csharp.git
 cd CheckPoint1
 ```
 
